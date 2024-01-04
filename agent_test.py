@@ -2,6 +2,7 @@
 # import gymnasium as gym
 import os
 import gym
+import sys
 import tensorflow as tf
 from tf_agents.utils import common
 from tf_agents.agents import ddpg
@@ -16,7 +17,10 @@ from gym_files.wrappers import standStraightReward
 from gym_files.wrappers import observationFilter
 from tf_agents_local.agents.cacla_agent import CaclaAgent
 
-
+args = sys.argv
+test_step = -1
+if len(args) > 1:
+    test_step = int(args[1])
 
 INITIAL_COLLECT_STEPS = 1000 # @param {type:"integer"}
 COLLECT_STEPS_PER_ITERATION = 1 # @param {type:"integer"}
@@ -42,8 +46,8 @@ lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
     decay_rate=0.9)
 # ACTOR_FC_LAYERS = (512, 512, 256, 64)
 # CRITIC_FC_LAYERS = (512, 512, 256, 64)
-ACTOR_FC_LAYERS = (64,)
-CRITIC_FC_LAYERS = (64,)
+ACTOR_FC_LAYERS = (64, 64, 32, 16)
+CRITIC_FC_LAYERS = (256, 256, 128, 128, 64, 64, 32, 32)
 ACTOR_OPTIMIZER = tf.keras.optimizers.legacy.Adam(learning_rate=lr_schedule)
 CRITIC_OPTIMIZER = tf.keras.optimizers.legacy.Adam(learning_rate=lr_schedule)
 
@@ -78,7 +82,7 @@ gamma=0.95
 reward_scale_factor=1
 gradient_clipping=0.2
 TRAIN_STEP_COUNTER = tf.compat.v1.train.get_or_create_global_step()
-agent = CaclaAgent(
+agent = DdpgAgent(
     env.time_step_spec(),
     env.action_spec(),
     actor_network=actor_net,
@@ -116,7 +120,7 @@ train_metrics = [
         tf_metrics.AverageReturnMetric(),
         tf_metrics.AverageEpisodeLengthMetric(),
         ]
-agent_dir = './tf_agents_files/agents'
+agent_dir = './tf_agents_files'
 
 # agent saving
 LOG_INTERVAL = 200
@@ -130,12 +134,15 @@ checkpointer = common.Checkpointer(
     metric = metric_utils.MetricsGroup(train_metrics, 'train_metrics')
 )
 
-checkpointer.initialize_or_restore()
-
+if test_step != -1:
+    checkpointer.initialize_or_restore(test_step)
+else:
+    checkpointer.initialize_or_restore()
+print("start")
 time_step = env.reset()
 while True:
     action_step = agent.collect_policy.action(time_step)
-    print(action_step.action)
+    # print(action_step.action)
     time_step = env.step(action_step.action)
     print(time_step.reward)
     print()

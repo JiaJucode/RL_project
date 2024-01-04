@@ -4,10 +4,8 @@ import numpy as np
 from tf_agents.agents import ddpg
 from tf_agents.agents import DdpgAgent
 from tf_agents.replay_buffers import tf_uniform_replay_buffer
-from tf_agents.metrics import tf_metrics
 from tf_agents.drivers import dynamic_step_driver
 from tf_agents.utils import common
-from tf_agents.eval import metric_utils
 
 class DDPG():
     def __init__(self,
@@ -15,15 +13,15 @@ class DDPG():
                  actor_fc_layers,
                  critic_fc_layers,
                  checkpoint_dir,
-                 reward_log_dir,
+                 log_dir,
                  actor_learning_rate=
                  tf.keras.optimizers.schedules.ExponentialDecay(
-                    initial_learning_rate=1e-3,
+                    initial_learning_rate=1e-4,
                     decay_steps=1000,
                     decay_rate=0.99),
                  critic_learning_rate=
                  tf.keras.optimizers.schedules.ExponentialDecay(
-                    initial_learning_rate=1e-3,
+                    initial_learning_rate=1e-4,
                     decay_steps=1000,
                     decay_rate=0.99),
                  ou_stddev=1,
@@ -39,16 +37,17 @@ class DDPG():
                  max_buffer_length=100000,
                  initial_collection_steps=1000,
                  reset_collection_steps=200,
-                 collection_per_interation=1,
+                 collection_per_interation=100,
                  ) -> None:
-        self._reward_log_dir = reward_log_dir
+
+        self.log_dir = log_dir
         self._env = env
         self._batch_size = batch_size
         
         action_spec = env.action_spec()
         observation_spec = env.observation_spec()
         actor_optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=actor_learning_rate)
-        critic_optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=critic_learning_rate)
+        critic_optimizer = tf.keras.optimizers.Nadam(learning_rate=critic_learning_rate)
         actor_net = ddpg.actor_network.ActorNetwork(
             observation_spec, action_spec, fc_layer_params=actor_fc_layers,
             activation_fn=tf.keras.activations.tanh,
@@ -59,7 +58,7 @@ class DDPG():
         )
         critic_net = ddpg.critic_network.CriticNetwork(
             (observation_spec, action_spec), joint_fc_layer_params=critic_fc_layers,
-            activation_fn=tf.keras.activations.tanh,
+            activation_fn=tf.keras.activations.linear,
             kernel_initializer=tf.keras.initializers.RandomUniform(
                 minval=-0.003, maxval=0.003),
             last_kernel_initializer=tf.keras.initializers.RandomUniform(
@@ -96,13 +95,7 @@ class DDPG():
             num_parallel_calls=4, sample_batch_size=batch_size,
             num_steps=2).prefetch(3)
         self._iterator = iter(dataset)
-
-        train_metrics = [
-            tf_metrics.NumberOfEpisodes(),
-            tf_metrics.EnvironmentSteps(),
-            tf_metrics.AverageReturnMetric(),
-            tf_metrics.AverageEpisodeLengthMetric(),
-            ]
+        
         self._initial_collect_driver = dynamic_step_driver.DynamicStepDriver(
             env, self._agent.collect_policy, observers=[replay_buffer.add_batch],
             num_steps=initial_collection_steps)
@@ -111,52 +104,79 @@ class DDPG():
             env, self._agent.collect_policy, observers=[replay_buffer.add_batch],
             num_steps=reset_collection_steps)
 
+        self._collection_per_interation = collection_per_interation
         self._collect_driver = dynamic_step_driver.DynamicStepDriver(
-            env, self._agent.collect_policy, observers=[replay_buffer.add_batch] + train_metrics,
+            env, self._agent.collect_policy, observers=[replay_buffer.add_batch],
             num_steps=collection_per_interation)
         
         self._checkpointer = common.Checkpointer(
             ckpt_dir = checkpoint_dir,
             max_to_keep = 5000,
             agent = self._agent,
-            global_step = self._agent.train_step_counter,
-            metric = metric_utils.MetricsGroup(train_metrics, 'train_metrics')
+            global_step = self._agent.train_step_counter
         )
         self._checkpointer.initialize_or_restore()
         
-    def start(self,
-              train_iters=500000,
-              total_track_returns=100,
-              train_per_loop=1,
-              log_interval=200,
-              eval_interval=1000,
-              reset_interval=1000,
-              reset_increment=200):
+    def train(self,
+              train_iters=120,
+              train_per_loop=1000,
+              log_interval=1,
+              eval_interval=1,
+              reset_interval=1,
+              reset_increment=0.25):
         self._initial_collect_driver.run()
+        self._env.reset()
         print("start")
         next_reset = reset_interval
-        past_returns = deque(maxlen=total_track_returns)
-        with open(self._reward_log_dir, 'a') as f:
-            for _ in range(train_iters):
-                self._collect_driver.run()
-                for _ in range(train_per_loop):
-                    experience, _ = next(self._iterator)
-                    loss_info = self._agent.train(experience)
-                step = self._agent.train_step_counter.numpy()
-                reward = np.sum(experience.reward.numpy())/self._batch_size/2
-                past_returns.append(reward)
-                if step % log_interval == 0:
-                    print('step = {0}: loss = {1}'.format(step, loss_info.loss))
-                    ave = sum(past_returns) / len(past_returns)
-                    print('step = {0}: Average Return = {1}'
-                            .format(step, ave))
+        returns = []
+        critic_losses = []
+        actor_losses = []
+        past_returns = deque(maxlen=train_per_loop)
+        for _ in range(train_iters):
+            self._collect_driver.run()
+            critic_loss = 0
+            actor_loss = 0
+            for _ in range(train_per_loop):
+                experience, _ = next(self._iterator)
+                loss_info = self._agent.train(experience)
+                critic_loss += loss_info.extra.critic_loss
+                actor_loss += loss_info.extra.actor_loss
+                past_returns.append(
+                    np.sum(experience.reward.numpy())/self._batch_size/2)
+            critic_loss /= train_per_loop
+            actor_loss /= train_per_loop
+            step = self._agent.train_step_counter.numpy()
+            if step % (log_interval * self._collection_per_interation) == 0:
+                print(f'step = {step}: critic loss = {critic_loss}')
+                print(f'step = {step}: actor loss = {actor_loss}')
+                ave = sum(past_returns) / len(past_returns)
+                big = max(past_returns)
+                small = min(past_returns)
+                print(f'step = {step}: Average Return = {ave}, max = {big}, min = {small}')
+                returns.append(ave)
+                critic_losses.append(critic_loss)
+                actor_losses.append(actor_loss)
+                with open(self.log_dir + "returns.txt", "a") as f:
                     f.write(str(ave) + "\n")
                     f.flush()
-                if step % eval_interval == 0:
-                    self._checkpointer.save(global_step=step)
-                if step % next_reset == 0:
-                    reset_interval += reset_increment
-                    next_reset += reset_interval
-                    self._env.reset()
-                    self._reset_collect_driver.run()
+                with open(self.log_dir + "critic_loss.txt", "a") as f:
+                    f.write(str(critic_loss.numpy()) + "\n")
+                    f.flush()
+                with open(self.log_dir + "actor_loss.txt", "a") as f:
+                    f.write(str(actor_loss.numpy()) + "\n")
+                    f.flush()
+            if step % (eval_interval * train_per_loop) == 0:
+                self._checkpointer.save(global_step=step)
+            # if step % next_reset == 0:
+            #     reset_interval += reset_increment
+            #     next_reset += reset_interval
+            #     self._env.reset()
+            #     self._reset_collect_driver.run()
+            print(step)
+            print(next_reset * train_per_loop)
+            if step >= (next_reset * train_per_loop):
+                self._env.reset()
+                reset_interval += reset_increment
+                next_reset += reset_interval
+        return returns, critic_losses, actor_losses
                 

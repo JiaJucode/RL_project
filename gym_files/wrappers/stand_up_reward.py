@@ -43,45 +43,42 @@ class standStraightReward(gym.Wrapper):
         reward += (self.env.get_link_pos("head")[2] \
                  + self.env.get_position()[2] \
                  + self.env.get_link_pos("hip")[2]) / 3 \
-                 - (self.env.get_link_pos("right_foot")[2] \
-                 + self.env.get_link_pos("left_foot")[2]) / 2
+                 - (self.env.get_link_pos("right_foot")[2] + \
+                    self.env.get_link_pos("left_foot")[2]) / 2
 
         # higher reward for facing forward or downward
-        chest_orientation_y=self.env.get_orientation()[1]
-        hip_orientation_y=self.env.get_orientation("hip")[1]
-        if (chest_orientation_y >= -math.pi/10 and
-            chest_orientation_y <= math.pi/4 and
-            hip_orientation_y >= -math.pi/10 and
-            hip_orientation_y <= math.pi/4):
-            # print("facing forward")
-            reward += 0.4
-        elif (chest_orientation_y >= math.pi/4 and
-              chest_orientation_y <= math.pi*0.7 and
-              hip_orientation_y >= math.pi/4 and
-              hip_orientation_y <= math.pi*0.7):
-            # print("facing downward")
-            reward += 0.2
-        elif (hip_orientation_y >= -math.pi/1.5 and
-              hip_orientation_y <= -math.pi/10):
-            # print("facing upward + backward")
-            reward -= 0.8
+        # chest_orientation_y=self.env.get_orientation()[1]
+        # hip_orientation_y=self.env.get_orientation("hip")[1]
+        # if (chest_orientation_y >= -math.pi/10 and
+        #     chest_orientation_y <= math.pi/4 and
+        #     hip_orientation_y >= -math.pi/10 and
+        #     hip_orientation_y <= math.pi/4):
+        #     # print("facing forward")
+        #     reward += 0.4
+        # elif (chest_orientation_y >= math.pi/4 and
+        #       chest_orientation_y <= math.pi*0.7 and
+        #       hip_orientation_y >= math.pi/4 and
+        #       hip_orientation_y <= math.pi*0.7):
+        #     # print("facing downward")
+        #     reward += 0.2
+        # elif (hip_orientation_y >= -math.pi/1.5 and
+        #       hip_orientation_y <= -math.pi/10):
+        #     # print("facing upward + backward")
+        #     reward -= 0.4
 
-        # big movement = small reward
-        reward -= 0.7 * np.mean(np.abs(action)) / self.env.action_space.high[0]
+        # # big movement = small reward
+        # reward -= 0.2 * np.mean(np.abs(action)) / self.env.action_space.high[0]
 
         if self._on_ground():
             if self._standing():
-                reward += 0.7
+                reward += 1
                 # print("standing ", reward)
             elif self._crawling():
                 reward += 0.5
                 # print("standing on four ", reward)
             elif self._not_lying():
-                reward += 0.3
+                reward += 0.25
                 # print("not lying ", reward)
         else:
-            if (reward > 0):
-                reward = -1.5
-            else:
-                reward -= 1.5
+            reward -= 3
         return observation, reward, False, info

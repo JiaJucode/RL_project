@@ -11,7 +11,7 @@ import pybullet_data
 
 
 OBJ_STATE_NUM = 13
-MAX_TORQUE = 15
+MAX_TORQUE = 5
 
 
 class BasicSkateboardEnv(gym.Env):
@@ -33,7 +33,7 @@ class BasicSkateboardEnv(gym.Env):
                 "agent": spaces.Box(
                     low=-float("inf"),
                     high=float("inf"),
-                    shape=(OBJ_STATE_NUM + len(self._agent_joint_index) * 5,),
+                    shape=(OBJ_STATE_NUM + len(self._agent_joint_index) * 8,),
                 ),
                 "skateboard": spaces.Box(
                     low=-float("inf"),
@@ -93,9 +93,8 @@ class BasicSkateboardEnv(gym.Env):
     def _load_ground(self, ground_path) -> None:
         ground = p.loadURDF(ground_path)
         for link_index in range(p.getNumJoints(ground) + 1):
-            p.changeDynamics(ground, link_index, lateralFriction=0.99,
-                             rollingFriction=0.99, spinningFriction =0.99,
-                             restitution=0)
+            p.changeDynamics(ground, link_index, lateralFriction=0.75,
+                             rollingFriction=0.012, restitution=0)
         return ground
 
     def _load_agent(self, humanoid_start_pos, humanoid_start_orientation) -> None:
@@ -279,7 +278,7 @@ class BasicSkateboardEnv(gym.Env):
     def _get_obs(self) -> dict:
         # agent
         # location(3) + orientation(4) + linear velocity(3) + angular velocity(3) +
-        # joint states(5N for agent, 2N for skateboard)
+        # joint states(8N for agent, 2N for skateboard)
         return {
             "agent": np.array(
                 list(self._agent_location) +
@@ -306,6 +305,7 @@ class BasicSkateboardEnv(gym.Env):
         else:
             raise ValueError("target_id must be either 'ground' or 'skateboard'")
         if link_name == None:
+            points = p.getContactPoints(self._agent_id, index)
             return p.getContactPoints(self._agent_id, index)
         else:
             return p.getContactPoints(
@@ -336,16 +336,18 @@ class BasicSkateboardEnv(gym.Env):
         self._agent_velocities = list(linear_velocity + angular_velocity)
         joint_states = p.getJointStates(self._agent_id, self._agent_joint_index)
         joint_info = []
-        for index in range(len(self._agent_joint_index)):
-            # normal reaction force
-            contact_point_info = p.getContactPoints(
-                self._agent_id, self._ground_id, linkIndexA=index
-            )
-            normal_sum = np.array([0, 0, 0])
-            if contact_point_info is not None:
-                for contact_point in contact_point_info:
-                    normal_sum = np.add(normal_sum, contact_point[7])
-            joint_info += list(joint_states[index][0:2]) + list(normal_sum)
+        # for index in range(len(self._agent_joint_index)):
+        #     # normal reaction force
+        #     contact_point_info = p.getContactPoints(
+        #         self._agent_id, self._ground_id, linkIndexA=index
+        #     )
+        #     normal_sum = np.array([0, 0, 0])
+        #     if contact_point_info is not None:
+        #         for contact_point in contact_point_info:
+        #             normal_sum = np.add(normal_sum, contact_point[7])
+        #     joint_info += list(joint_states[index][0:2]) + list(normal_sum)
+        for joint_state in joint_states:
+            joint_info += list(joint_state[0:2]) + list(joint_state[2])
         self._agent_joint_info = joint_info
 
         self._skateboard_location, self._skateboard_orientation \

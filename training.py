@@ -182,6 +182,7 @@ with open(agent_dir + "/returns.txt", "a") as f:
         if step % LOG_INTERVAL == 0:
             print('step = {0}: loss = {1}'.format(step, loss_info.loss))
             ave = sum(past_returns) / len(past_returns)
+            print(past_returns)
             print('step = {0}: Average Return = {1}'
                     .format(step, ave))
             f.write(str(ave) + "\n")
